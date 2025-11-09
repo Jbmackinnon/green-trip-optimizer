@@ -1,0 +1,16 @@
+# Green Trip Optimizer
+
+A mobile + web app (built in Flutter) for saving “future stops”, planning greener trips by combining saved stops, and tracking your CO₂ savings offline.
+
+## Features
+- Save destinations you want to visit later  
+- Plan a trip between two locations and get suggested stops to add  
+- Estimate your CO₂ savings from combining trips  
+- Works offline and as a PWA (installable web app)  
+- Minimal data & processing overhead — designed to stay green  
+
+## Setup
+1. `flutter pub get`  
+2. Generate Hive adapters:  
+   ```bash
+   flutter packages pub run build_runner build
