@@ -1,0 +1,319 @@
+1️⃣ main.dart
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+
+import 'models/saved_place.dart';
+import 'providers/trip_provider.dart';
+import 'screens/home_screen.dart';
+import 'screens/plan_trip_screen.dart';
+import 'services/route_service.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Hive
+  await Hive.initFlutter();
+  Hive.registerAdapter(SavedPlaceAdapter());
+  await Hive.openBox('saved_places');
+  await Hive.openBox('route_cache');
+
+  runApp(const GreenTripApp());
+}
+
+class GreenTripApp extends StatelessWidget {
+  const GreenTripApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => TripProvider()),
+        Provider(create: (_) => RouteService()),
+      ],
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Green Trip Optimizer',
+        theme: ThemeData(
+          primarySwatch: Colors.green,
+        ),
+        initialRoute: '/',
+        routes: {
+          '/': (_) => const HomeScreen(),
+          '/plan_trip': (_) => const PlanTripScreen(),
+        },
+      ),
+    );
+  }
+}
+
+2️⃣ models/saved_place.dart
+import 'package:hive/hive.dart';
+part 'saved_place.g.dart';
+
+@HiveType(typeId: 0)
+class SavedPlace {
+  @HiveField(0)
+  String name;
+
+  @HiveField(1)
+  double lat;
+
+  @HiveField(2)
+  double lng;
+
+  @HiveField(3)
+  DateTime addedAt;
+
+  SavedPlace({
+    required this.name,
+    required this.lat,
+    required this.lng,
+    DateTime? addedAt,
+  }) : addedAt = addedAt ?? DateTime.now();
+}
+Run to generate adapter:
+flutter packages pub run build_runner build
+
+3️⃣ providers/trip_provider.dart
+import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
+import '../models/saved_place.dart';
+
+class TripProvider extends ChangeNotifier {
+  final Box _box = Hive.box('saved_places');
+  List<SavedPlace> _savedPlaces = [];
+  double _co2Saved = 0.0;
+
+  TripProvider() {
+    _savedPlaces = _box.values.cast<SavedPlace>().toList();
+  }
+
+  List<SavedPlace> get savedPlaces => _savedPlaces;
+  double get co2Saved => _co2Saved;
+
+  void addPlace(SavedPlace place) {
+    _savedPlaces.add(place);
+    _box.add(place);
+    notifyListeners();
+  }
+
+  void removePlace(SavedPlace place) {
+    _savedPlaces.remove(place);
+    _box.deleteAt(_savedPlaces.indexOf(place));
+    notifyListeners();
+  }
+
+  void addCo2Saved(double amount) {
+    _co2Saved += amount;
+    notifyListeners();
+  }
+}
+
+4️⃣ services/route_service.dart
+import '../models/saved_place.dart';
+
+class RouteService {
+  final Map<String, List<SavedPlace>> _routeCache = {};
+
+  // Dummy route suggestion
+  Future<List<SavedPlace>> suggestStops({
+    required double startLat,
+    required double startLng,
+    required double endLat,
+    required double endLng,
+    required List<SavedPlace> allPlaces,
+  }) async {
+    // For demo, return all saved places
+    return allPlaces;
+  }
+
+  List<SavedPlace>? getCachedStops(double startLat, double startLng, double endLat, double endLng) {
+    String key = '$startLat,$startLng,$endLat,$endLng';
+    return _routeCache[key];
+  }
+
+  double estimateCo2Saving(double km, int stops) {
+    // Simple offline CO2 calculation: 120g per km minus stops bonus
+    return (km * 120) - (stops * 50);
+  }
+}
+
+5️⃣ screens/home_screen.dart
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/trip_provider.dart';
+import '../widgets/co2_dashboard.dart';
+import '../models/saved_place.dart';
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final tripProv = Provider.of<TripProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Green Trip Optimizer')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Co2Dashboard(),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView.builder(
+                itemCount: tripProv.savedPlaces.length,
+                itemBuilder: (context, index) {
+                  final place = tripProv.savedPlaces[index];
+                  return ListTile(
+                    leading: const Icon(Icons.place, color: Colors.green),
+                    title: Text(place.name),
+                    subtitle: Text('Lat: ${place.lat}, Lng: ${place.lng}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () => tripProv.removePlace(place),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          tripProv.addPlace(SavedPlace(name: 'New Stop', lat: 48.8566, lng: 2.3522));
+        },
+      ),
+    );
+  }
+}
+
+6️⃣ screens/plan_trip_screen.dart
+import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:provider/provider.dart';
+import '../providers/trip_provider.dart';
+import '../services/route_service.dart';
+import '../models/saved_place.dart';
+
+class PlanTripScreen extends StatefulWidget {
+  const PlanTripScreen({super.key});
+
+  @override
+  State<PlanTripScreen> createState() => _PlanTripScreenState();
+}
+
+class _PlanTripScreenState extends State<PlanTripScreen> {
+  GoogleMapController? _mapController;
+  LatLng _start = const LatLng(48.8566, 2.3522);
+  LatLng _end = const LatLng(51.5074, -0.1278);
+  Set<Marker> _markers = {};
+  double _estimatedCo2Saved = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedStops();
+  }
+
+  Future<void> _loadSavedStops() async {
+    final routeService = context.read<RouteService>();
+    final tripProv = context.read<TripProvider>();
+
+    List<SavedPlace> suggestions = routeService.getCachedStops(
+          _start.latitude, _start.longitude, _end.latitude, _end.longitude) ??
+        await routeService.suggestStops(
+          startLat: _start.latitude,
+          startLng: _start.longitude,
+          endLat: _end.latitude,
+          endLng: _end.longitude,
+          allPlaces: tripProv.savedPlaces,
+        );
+
+    setState(() {
+      _markers = suggestions.map((p) {
+        return Marker(
+          markerId: MarkerId(p.name),
+          position: LatLng(p.lat, p.lng),
+          infoWindow: InfoWindow(title: p.name),
+        );
+      }).toSet();
+
+      _estimatedCo2Saved = routeService.estimateCo2Saving(100, suggestions.length * 2);
+      tripProv.addCo2Saved(_estimatedCo2Saved);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Plan Your Trip')),
+      body: Column(
+        children: [
+          Expanded(
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(target: _start, zoom: 6),
+              markers: _markers,
+              onMapCreated: (controller) => _mapController = controller,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Column(
+              children: [
+                Text(
+                  'Estimated CO₂ Saved: ${_estimatedCo2Saved.toStringAsFixed(1)} g',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/');
+                  },
+                  child: const Text('Back to Home'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+7️⃣ widgets/co2_dashboard.dart
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/trip_provider.dart';
+
+class Co2Dashboard extends StatelessWidget {
+  const Co2Dashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final tripProv = Provider.of<TripProvider>(context);
+
+    return Card(
+      color: Colors.green[50],
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            const Text(
+              'Cumulative CO₂ Saved',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${tripProv.co2Saved.toStringAsFixed(1)} g',
+              style: const TextStyle(fontSize: 24, color: Colors.green),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
